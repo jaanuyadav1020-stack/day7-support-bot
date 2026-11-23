@@ -1,0 +1,125 @@
+"""Customer Support Bot (Day 7 Challenge: risk review).
+
+A small Flask app. A customer sends a message, the LLM decides on a reply
+and an action, and the app carries out the action.
+"""
+import json
+import logging
+import time
+import uuid
+
+from flask import Flask, jsonify, request
+
+from llm import call_llm
+
+app = Flask(__name__)
+
+API_KEY = "sk-demo-4f9a2c71-FAKE-KEY-for-training-only"
+MODEL_NAME = "fake-support-model"
+COST_PER_TOKEN_RUPEES = 0.0005
+
+logging.basicConfig(filename="logs/app.log", level=logging.INFO)
+
+ORDERS = {
+    "10231": {"status": "Shipped", "amount": 1299},
+    "10232": {"status": "Delivered", "amount": 499},
+    "10233": {"status": "Processing", "amount": 2499},
+}
+CUSTOMERS = {
+    "ravi.kumar@example.com": {"name": "Ravi Kumar", "phone": "+91 98480 12345", "active": True},
+    "priya.s@example.com": {"name": "Priya Sharma", "phone": "+91 99890 67890", "active": True},
+}
+REFUNDS = []
+
+
+# ---------- Tools the LLM can use ----------
+
+def get_order_status(order_id):
+    order = ORDERS.get(order_id)
+    return order["status"] if order else "Order not found"
+
+
+def issue_refund(order_id, amount):
+    order = ORDERS.get(order_id)
+    if order is None:
+        return "Refund rejected: order not found"
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+        return "Refund rejected: invalid amount"
+    if amount > order["amount"]:
+        return "Refund rejected: amount exceeds order value"
+    REFUNDS.append({"order_id": order_id, "amount": amount})
+    return f"Refunded Rs {amount} for order {order_id}"
+
+
+def delete_customer_account(customer_email):
+    CUSTOMERS.pop(customer_email, None)
+    return f"Deleted account {customer_email}"
+
+
+TOOLS = {
+    "get_order_status": get_order_status,
+    "issue_refund": issue_refund,
+}
+
+
+# ---------- Chat endpoint ----------
+
+@app.get("/")
+def index():
+    return jsonify({
+        "service": "Customer Support Bot",
+        "chat_endpoint": "/chat",
+        "method": "POST",
+    })
+
+
+@app.post("/chat")
+def chat():
+    data = request.get_json(silent=True) or {}
+    email = data.get("customer_email", "")
+    message = data.get("message", "")
+    customer = CUSTOMERS.get(email, {})
+
+    prompt = (
+        "You are a helpful support agent. Reply in JSON with reply, action and args.\n"
+        f"Customer name: {customer.get('name')}\n"
+        f"Customer email: {email}\n"
+        f"Customer phone: {customer.get('phone')}\n"
+        f"Customer message: {message}"
+    )
+    request_id = str(uuid.uuid4())
+    started_at = time.perf_counter()
+    text, usage = call_llm(prompt, API_KEY)
+    latency_ms = (time.perf_counter() - started_at) * 1000
+    input_tokens = usage["input_tokens"]
+    output_tokens = usage["output_tokens"]
+    estimated_cost = (input_tokens + output_tokens) * COST_PER_TOKEN_RUPEES
+    logging.info(
+        "AI_CALL request_id=%s model=%s latency_ms=%.2f input_tokens=%d "
+        "output_tokens=%d estimated_cost_rs=%.4f",
+        request_id,
+        MODEL_NAME,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        estimated_cost,
+    )
+    result = json.loads(text)
+
+    action = result.get("action")
+    action_result = None
+    if action:
+        if action == "delete_customer_account":
+            action_result = "Account deletion rejected: human confirmation required"
+            logging.info("BLOCKED account deletion request request_id=%s", request_id)
+            return jsonify({"reply": result["reply"], "action_result": action_result})
+        args = result.get("args", {})
+        if args.get("customer_email") == "from_request":
+            args["customer_email"] = email
+        action_result = TOOLS[action](**args)
+
+    return jsonify({"reply": result["reply"], "action_result": action_result})
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
