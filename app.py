@@ -5,6 +5,8 @@ and an action, and the app carries out the action.
 """
 import json
 import logging
+import time
+import uuid
 
 from flask import Flask, jsonify, request
 
@@ -13,6 +15,8 @@ from llm import call_llm
 app = Flask(__name__)
 
 API_KEY = "sk-demo-4f9a2c71-FAKE-KEY-for-training-only"
+MODEL_NAME = "fake-support-model"
+COST_PER_TOKEN_RUPEES = 0.0005
 
 logging.basicConfig(filename="logs/app.log", level=logging.INFO)
 
@@ -83,9 +87,23 @@ def chat():
         f"Customer phone: {customer.get('phone')}\n"
         f"Customer message: {message}"
     )
-    logging.info("PROMPT: %s", prompt)
-
+    request_id = str(uuid.uuid4())
+    started_at = time.perf_counter()
     text, usage = call_llm(prompt, API_KEY)
+    latency_ms = (time.perf_counter() - started_at) * 1000
+    input_tokens = usage["input_tokens"]
+    output_tokens = usage["output_tokens"]
+    estimated_cost = (input_tokens + output_tokens) * COST_PER_TOKEN_RUPEES
+    logging.info(
+        "AI_CALL request_id=%s model=%s latency_ms=%.2f input_tokens=%d "
+        "output_tokens=%d estimated_cost_rs=%.4f",
+        request_id,
+        MODEL_NAME,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        estimated_cost,
+    )
     result = json.loads(text)
 
     action = result.get("action")
@@ -93,14 +111,13 @@ def chat():
     if action:
         if action == "delete_customer_account":
             action_result = "Account deletion rejected: human confirmation required"
-            logging.info("BLOCKED account deletion request for %s", email)
+            logging.info("BLOCKED account deletion request request_id=%s", request_id)
             return jsonify({"reply": result["reply"], "action_result": action_result})
         args = result.get("args", {})
         if args.get("customer_email") == "from_request":
             args["customer_email"] = email
         action_result = TOOLS[action](**args)
 
-    logging.info("REPLY to %s: %s", email, result["reply"])
     return jsonify({"reply": result["reply"], "action_result": action_result})
 
 

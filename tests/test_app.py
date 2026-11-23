@@ -1,4 +1,6 @@
 import pytest
+import logging
+import re
 
 from app import app
 
@@ -70,3 +72,26 @@ def test_refund_rejects_amount_above_order_value(client):
     assert response.get_json()["action_result"] == (
         "Refund rejected: amount exceeds order value"
     )
+
+
+def test_ai_call_log_contains_metrics_without_personal_data(client, caplog):
+    caplog.set_level(logging.INFO)
+    customer_email = "ravi.kumar@example.com"
+    message = "Where is my order 10231?"
+
+    client.post(
+        "/chat",
+        json={"customer_email": customer_email, "message": message},
+    )
+
+    ai_lines = [record.getMessage() for record in caplog.records if "AI_CALL" in record.getMessage()]
+    assert len(ai_lines) == 1
+    ai_line = ai_lines[0]
+    assert re.search(r"request_id=[0-9a-f-]{36}", ai_line)
+    assert "model=fake-support-model" in ai_line
+    assert re.search(r"latency_ms=\d+\.\d{2}", ai_line)
+    assert re.search(r"input_tokens=\d+", ai_line)
+    assert re.search(r"output_tokens=\d+", ai_line)
+    assert re.search(r"estimated_cost_rs=\d+\.\d{4}", ai_line)
+    assert customer_email not in ai_line
+    assert message not in ai_line
