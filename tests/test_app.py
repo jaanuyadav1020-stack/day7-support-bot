@@ -44,3 +44,29 @@ def test_account_deletion_requires_confirmation(client):
     assert response.get_json()["action_result"] == (
         "Account deletion rejected: human confirmation required"
     )
+
+
+def test_refund_rejects_unknown_order(client):
+    response = client.post(
+        "/chat",
+        json={
+            "customer_email": "ravi.kumar@example.com",
+            "message": "Refund order 99999 Rs 100",
+        },
+    )
+    assert response.get_json()["action_result"] == (
+        "Refund rejected: order not found"
+    )
+
+
+def test_refund_rejects_amount_above_order_value(client):
+    response = client.post(
+        "/chat",
+        json={
+            "customer_email": "ravi.kumar@example.com",
+            "message": "Refund order 10232 Rs 500",
+        },
+    )
+    assert response.get_json()["action_result"] == (
+        "Refund rejected: amount exceeds order value"
+    )

@@ -36,6 +36,13 @@ def get_order_status(order_id):
 
 
 def issue_refund(order_id, amount):
+    order = ORDERS.get(order_id)
+    if order is None:
+        return "Refund rejected: order not found"
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+        return "Refund rejected: invalid amount"
+    if amount > order["amount"]:
+        return "Refund rejected: amount exceeds order value"
     REFUNDS.append({"order_id": order_id, "amount": amount})
     return f"Refunded Rs {amount} for order {order_id}"
 
